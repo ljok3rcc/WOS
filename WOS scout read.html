@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enemy Scout Analyzer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+            background-color: #f4f4f9;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+        }
+        .output {
+            margin-top: 20px;
+            padding: 15px;
+            background: #eef;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Enemy Scout Analyzer</h1>
+        <form id="scoutForm">
+            <label for="screenshot">Upload Enemy Scout Screenshots (Max 3):</label>
+            <input type="file" id="screenshot" accept="image/*" multiple required>
+            <button type="button" id="analyzeBtn">Analyze</button>
+        </form>
+        <div id="output" class="output" style="display: none;">
+            <h2>Analysis Results</h2>
+            <p id="enemyData">Extracting enemy data...</p>
+            <p id="encounterData">Calculating encounter composition...</p>
+        </div>
+    </div>
+
+    <script>
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const screenshotInput = document.getElementById('screenshot');
+        const outputDiv = document.getElementById('output');
+        const enemyDataP = document.getElementById('enemyData');
+        const encounterDataP = document.getElementById('encounterData');
+
+        const GOOGLE_API_KEY = "AIzaSyDvY63VE5sAOAWxC6XnUAa7K0QHZ2eU5lk";
+
+        analyzeBtn.addEventListener('click', async () => {
+            const files = screenshotInput.files;
+            if (!files || files.length === 0) {
+                alert('Please upload up to 3 screenshots.');
+                return;
+            }
+            if (files.length > 3) {
+                alert('You can only upload a maximum of 3 screenshots.');
+                return;
+            }
+
+            outputDiv.style.display = 'block';
+            enemyDataP.innerHTML = 'Processing images...';
+            encounterDataP.innerHTML = '';
+
+            let combinedText = '';
+
+            for (let i = 0; i < files.length; i++) {
+                try {
+                    const base64Image = await toBase64(files[i]);
+                    const visionResponse = await fetch(
+                        `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_API_KEY}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                requests: [
+                                    {
+                                        image: { content: base64Image.split(",")[1] },
+                                        features: [{ type: 'TEXT_DETECTION' }],
+                                    },
+                                ],
+                            }),
+                        }
+                    );
+
+                    const visionData = await visionResponse.json();
+                    const text = visionData.responses[0].fullTextAnnotation?.text || '';
+                    combinedText += text + '\n';
+                } catch (error) {
+                    console.error(`Error processing image ${i + 1}:`, error);
+                    alert(`Error processing image ${i + 1}. Please try again.`);
+                    return;
+                }
+            }
+
+            console.log('Extracted Text:', combinedText); // Debugging
+
+            // Initialize variables for troop data
+            let totalTroops = 0;
+            let infantryPct = 0;
+            let lancerPct = 0;
+            let marksmanPct = 0;
+
+            // Match total troops using flexible patterns
+            const troopMatch = combinedText.match(/Troops\s*Total:\s*([\d,]+)/i);
+            if (troopMatch) {
+                totalTroops = parseInt(troopMatch[1].replace(/,/g, ''), 10);
+            }
+
+            // Match percentages dynamically
+            const percentMatches = combinedText.match(/(\d{1,3}\.\d+)%/g);
+            if (percentMatches && percentMatches.length >= 3) {
+                infantryPct = parseFloat(percentMatches[0]);
+                lancerPct = parseFloat(percentMatches[1]);
+                marksmanPct = parseFloat(percentMatches[2]);
+            } else {
+                console.error('Failed to extract percentages. Extracted Matches:', percentMatches);
+                enemyDataP.innerHTML = 'Error: Failed to extract troop percentages. Please verify the screenshot format.';
+                return;
+            }
+
+            console.log('Extracted Values:', { totalTroops, infantryPct, lancerPct, marksmanPct }); // Debugging
+
+            // Validate extracted data
+            if (!totalTroops || infantryPct + lancerPct + marksmanPct !== 100) {
+                enemyDataP.innerHTML = `Error: Could not extract valid data from the image. Please manually check:<br>
+                                        Total Troops: ${totalTroops || 'N/A'}<br>
+                                        Infantry: ${infantryPct || 'N/A'}%<br>
+                                        Lancer: ${lancerPct || 'N/A'}%<br>
+                                        Marksman: ${marksmanPct || 'N/A'}%`;
+                return;
+            }
+
+            // Display extracted enemy data
+            enemyDataP.innerHTML = `Enemy Total Troops: ${totalTroops}<br>
+                                    Infantry: ${infantryPct}%<br>
+                                    Lancer: ${lancerPct}%<br>
+                                    Marksman: ${marksmanPct}%`;
+
+            // Calculate encounter composition based on coefficient
+            const coefficient = 2.5; // Example coefficient
+            const encounterTotalTroops = totalTroops * coefficient;
+
+            // Formulas to calculate encounter percentages
+            const encounterInfantry = Math.round(encounterTotalTroops * infantryPct / 100);
+            const encounterLancer = Math.round(encounterTotalTroops * lancerPct / 100);
+            const encounterMarksman = Math.round(encounterTotalTroops * marksmanPct / 100);
+
+            // Display encounter composition
+            encounterDataP.innerHTML = `Encounter Total Troops Needed: ${Math.round(encounterTotalTroops)}<br>
+                                       Infantry: ${encounterInfantry}<br>
+                                       Lancer: ${encounterLancer}<br>
+                                       Marksman: ${encounterMarksman}`;
+        });
+
+        function toBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = (error) => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+    </script>
+</body>
+</html>
